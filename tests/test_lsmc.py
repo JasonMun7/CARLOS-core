@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import numpy as np
 
-from carlos.config import B1Config
+from carlos.config import CarlosConfig
 from carlos.lsmc import build_training_set, lsmc_price
 
 
 def test_lsmc_finite_targets() -> None:
-    cfg = B1Config()
+    cfg = CarlosConfig()
     rng = np.random.default_rng(0)
     paths = 36.0 * np.exp(
         np.cumsum(rng.normal(-0.01, 0.05, size=(100, cfg.num_steps + 1)), axis=1)
@@ -21,7 +21,7 @@ def test_lsmc_finite_targets() -> None:
 
 
 def test_lsmc_price_positive() -> None:
-    cfg = B1Config()
+    cfg = CarlosConfig()
     rng = np.random.default_rng(1)
     paths = 36.0 * np.exp(
         np.cumsum(rng.normal(-0.005, 0.08, size=(500, cfg.num_steps + 1)), axis=1)
@@ -32,6 +32,6 @@ def test_lsmc_price_positive() -> None:
 
 
 def test_sampling_weights_sum_to_one() -> None:
-    cfg = B1Config()
+    cfg = CarlosConfig()
     w = cfg.sampling_weights(0)
     assert abs(sum(w.values()) - 1.0) < 1e-9

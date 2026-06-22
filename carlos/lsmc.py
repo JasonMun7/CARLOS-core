@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from carlos.config import B1Config
+from carlos.config import CarlosConfig
 from carlos.payoffs import basket_put_np
 
 
@@ -16,7 +16,7 @@ def polynomial_basis(x: np.ndarray) -> np.ndarray:
     return np.column_stack([np.ones_like(x), x, x**2])
 
 
-def payoff_paths(paths: np.ndarray, cfg: B1Config) -> np.ndarray:
+def payoff_paths(paths: np.ndarray, cfg: CarlosConfig) -> np.ndarray:
     return basket_put_np(paths, cfg.strike, cfg.dim)
 
 
@@ -26,7 +26,7 @@ class LSMCResult:
     targets: np.ndarray  # (M,) timing values y = w - h(x)
 
 
-def build_training_set(paths: np.ndarray, cfg: B1Config) -> LSMCResult:
+def build_training_set(paths: np.ndarray, cfg: CarlosConfig) -> LSMCResult:
     """
     Backward LSMC; stack (t, x) -> timing value for Stage 1b ADNN init.
 
@@ -77,7 +77,7 @@ def build_training_set(paths: np.ndarray, cfg: B1Config) -> LSMCResult:
     return LSMCResult(states=states, targets=targets)
 
 
-def lsmc_price(paths: np.ndarray, cfg: B1Config) -> float:
+def lsmc_price(paths: np.ndarray, cfg: CarlosConfig) -> float:
     """Bermudan LSMC price from path matrix."""
     k_paths, n_plus = paths.shape
     n_steps = n_plus - 1

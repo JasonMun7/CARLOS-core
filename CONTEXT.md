@@ -2,6 +2,52 @@
 
 Reference: [Continuous-time Optimal Stopping through Deep Reinforcement Learning (CARLOS)](https://arxiv.org/pdf/2606.17545)
 
+## Benchmark
+
+**Benchmark** — a reproducible evaluation run with fixed contract parameters, training hyperparameters, and an acceptance target. Passing means the validation price meets the target within a stated tolerance.
+
+**Benchmark run** — an explicit, scored invocation of the full pipeline (not a smoke test). Produces pass/fail against the preset target.
+
+_Avoid_: Using `train --dev` or ad-hoc scripts as the official benchmark run.
+
+## B1
+
+**B1** — the first paper benchmark: a 1D arithmetic basket put (Table 2 parameters) trained with Table 6 path counts. Acceptance target: validation price **4.592** on the finest exercise grid, within ±0.05.
+
+**Benchmark protocol:** training seed **0**; scoring uses a **fixed validation path bank** so the reported price is comparable across runs with the same training seed.
+
+_Avoid_: Using `--dev` runs or coarse-grid prices as the B1 score.
+
+## Smoke Test
+
+**Smoke test** — a fast pipeline run with reduced path counts (`dev_mode`) to verify wiring and convergence behavior. Not scored against B1.
+
+_Avoid_: Calling smoke tests "B1," "benchmark," or comparing their price to 4.592.
+
+## Contract Parameters
+
+**Contract parameters** — Table 2 option definition: asset dynamics, payoff, horizon, and initial state. Independent of how CARLOS is trained.
+
+_Avoid_: Benchmark, config (when you mean the option itself).
+
+## Algorithm Hyperparameters
+
+**Algorithm hyperparameters** — Table 6 CARLOS training settings: path counts, mixture weights, grid schedule, learning rate, etc. Shared across contracts unless a benchmark specifies otherwise.
+
+## Benchmark Preset
+
+**Benchmark preset** — a named bundle of contract parameters, algorithm hyperparameters, and an acceptance target. **B1** is the first preset.
+
+_Avoid_: Using the benchmark name as the name for the general configuration type.
+
+## Validation Price
+
+**Validation price** — forward Monte Carlo estimate of option value under the learned stopping rule (Eq. 11). For benchmark scoring, use the finest exercise grid only.
+
+**Validation path bank** — the fixed set of simulated paths used to compute validation price and to monitor grid saturation. One bank per benchmark run, derived deterministically from the training seed.
+
+_Avoid_: Bermudan price, LSMC price (reference checks, not the benchmark score). Simulating a fresh path bank per scoring call.
+
 ## Timing Value
 
 **Timing value** `𝒯(t, x)` — difference between continuation value and immediate payoff (Eq. 5):

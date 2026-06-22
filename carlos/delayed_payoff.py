@@ -5,18 +5,18 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from carlos.config import B1Config
+from carlos.config import CarlosConfig
 from carlos.model import ADNN
 from carlos.payoffs import basket_put_np
 
 
-def delta_wait(t_init: float, cfg: B1Config, grid_level: int) -> float:
+def delta_wait(t_init: float, cfg: CarlosConfig, grid_level: int) -> float:
     """Eq. 31: exploration window length."""
     dt_tr = cfg.dt_for_level(grid_level)
     return (cfg.c_dlst ** (grid_level + 1)) * dt_tr * (1.0 - t_init / cfg.T)
 
 
-def _phi(model: ADNN, t: float, x: float, cfg: B1Config) -> int:
+def _phi(model: ADNN, t: float, x: float, cfg: CarlosConfig) -> int:
     """Return 1 if stop, 0 if continue (Eq. 11)."""
     device = torch.device("cpu")
     h = float(basket_put_np(np.array([x]), cfg.strike, cfg.dim)[0])
@@ -34,7 +34,7 @@ def compute_delayed_payoff(
     model: ADNN,
     path: np.ndarray,
     t_init: float,
-    cfg: B1Config,
+    cfg: CarlosConfig,
     grid_level: int,
 ) -> float:
     """
@@ -76,7 +76,7 @@ def compute_timing_target(
     model: ADNN,
     path: np.ndarray,
     t_init: float,
-    cfg: B1Config,
+    cfg: CarlosConfig,
     grid_level: int,
 ) -> float:
     """Eq. 30: y = y_dpf - h(x_t)."""

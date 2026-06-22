@@ -6,7 +6,7 @@ import math
 
 import numpy as np
 
-from carlos.config import B1Config
+from carlos.config import CarlosConfig
 
 
 def should_advance_grid(
@@ -42,7 +42,7 @@ def should_advance_grid(
     return lo <= 0.0 <= hi
 
 
-def build_validation_paths(cfg: B1Config, seed: int = 999) -> np.ndarray:
+def build_validation_paths(cfg: CarlosConfig, seed: int = 999) -> np.ndarray:
     from carlos.simulator import make_simulator
 
     max_level = cfg.max_grid_levels()

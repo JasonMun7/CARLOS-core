@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 import torch
 
-from carlos.config import B1Config
+from carlos.config import CarlosConfig
 from carlos.model import ADNN
 from carlos.payoffs import basket_put_np
 from carlos.simulator import make_simulator
@@ -25,7 +25,7 @@ def _state_from_tx(t: float, x: float, dim: int) -> np.ndarray:
     return np.asarray(row, dtype=np.float64)
 
 
-def _phi(model: ADNN, t: float, x: float, cfg: B1Config) -> bool:
+def _phi(model: ADNN, t: float, x: float, cfg: CarlosConfig) -> bool:
     device = torch.device("cpu")
     h = float(basket_put_np(np.array([x]), cfg.strike, cfg.dim)[0])
     state = torch.tensor([[[t, x]]], dtype=torch.float32, device=device)
@@ -37,7 +37,7 @@ def _phi(model: ADNN, t: float, x: float, cfg: B1Config) -> bool:
 
 def sample_training_inputs(
     model: ADNN,
-    cfg: B1Config,
+    cfg: CarlosConfig,
     grid_level: int,
     m: int,
     seed: int,

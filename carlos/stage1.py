@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset
 
-from carlos.config import B1Config
+from carlos.config import CarlosConfig
 from carlos.lsmc import build_training_set, lsmc_price
 from carlos.model import ADNN
 from carlos.pricing import validate_price
@@ -16,7 +16,7 @@ from carlos.simulator import make_simulator
 
 
 def train_adnn_on_dataset(
-    cfg: B1Config,
+    cfg: CarlosConfig,
     states: np.ndarray,
     targets: np.ndarray,
     model: ADNN | None = None,
@@ -49,8 +49,8 @@ def train_adnn_on_dataset(
     return net
 
 
-def run_stage1(cfg: B1Config | None = None, seed: int = 42) -> ADNN:
-    cfg = cfg or B1Config()
+def run_stage1(cfg: CarlosConfig | None = None, seed: int = 42) -> ADNN:
+    cfg = cfg or CarlosConfig()
     sim = make_simulator(cfg, num_paths=cfg.stage1_paths, seed=seed)
     sim.run()
     paths = np.array(sim.paths(0))
@@ -68,7 +68,7 @@ def run_stage1(cfg: B1Config | None = None, seed: int = 42) -> ADNN:
 def main() -> None:
     torch.manual_seed(0)
     np.random.seed(0)
-    cfg = B1Config(dev_mode=True)
+    cfg = CarlosConfig(dev_mode=True)
     model = run_stage1(cfg)
     validate_price(model, cfg)
 

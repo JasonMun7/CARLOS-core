@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 from torch.optim import Adam
 
-from carlos.config import B1Config
+from carlos.config import CarlosConfig
 from carlos.model import ADNN
 from carlos.pricing import compute_targets_fixed_k, validate_price
 from carlos.simulator import make_simulator
@@ -15,11 +15,11 @@ from carlos.stage1 import run_stage1
 
 
 def train_v1(
-    cfg: B1Config | None = None,
+    cfg: CarlosConfig | None = None,
     global_seed: int = 0,
     init_model: ADNN | None = None,
 ) -> ADNN:
-    cfg = cfg or B1Config()
+    cfg = cfg or CarlosConfig()
     device = torch.device("cpu")
     model = init_model or run_stage1(cfg, seed=global_seed)
     model = model.to(device)
@@ -53,7 +53,7 @@ def train_v1(
 def main() -> None:
     torch.manual_seed(0)
     np.random.seed(0)
-    cfg = B1Config(dev_mode=True, rl_epochs=3)
+    cfg = CarlosConfig(dev_mode=True, rl_epochs=3)
     model = train_v1(cfg)
     validate_price(model, cfg)
 

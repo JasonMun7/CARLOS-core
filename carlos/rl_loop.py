@@ -10,7 +10,7 @@ import torch.nn as nn
 from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset
 
-from carlos.config import B1Config, RLState
+from carlos.config import CarlosConfig, RLState, validation_bank_seed
 from carlos.delayed_payoff import compute_timing_target
 from carlos.grid import build_validation_paths, should_advance_grid
 from carlos.model import ADNN
@@ -24,7 +24,7 @@ def _train_batch(
     model: ADNN,
     states: np.ndarray,
     targets: np.ndarray,
-    cfg: B1Config,
+    cfg: CarlosConfig,
     lr: float,
 ) -> float:
     device = torch.device("cpu")
@@ -51,17 +51,20 @@ def _train_batch(
 
 
 def run_rl_loop(
-    cfg: B1Config | None = None,
+    cfg: CarlosConfig | None = None,
     seed: int = 0,
     max_loops_per_level: int = 5,
     init_model: ADNN | None = None,
+    val_paths: np.ndarray | None = None,
+    score_at_end: bool = True,
 ) -> ADNN:
-    cfg = cfg or B1Config()
+    cfg = cfg or CarlosConfig()
     torch.manual_seed(seed)
     np.random.seed(seed)
 
     model = init_model or run_stage1(cfg, seed=seed)
-    val_paths = build_validation_paths(cfg, seed=seed + 1000)
+    if val_paths is None:
+        val_paths = build_validation_paths(cfg, seed=validation_bank_seed(seed))
     rl_state = RLState(lr=cfg.lr)
 
     max_level = cfg.max_grid_levels()
@@ -111,11 +114,27 @@ def run_rl_loop(
             prev_rewards = curr_rewards
 
         rl_state.lr *= cfg.lr_decay
-        price = validate_price(model, cfg, num_steps=steps)
+        price = validate_price(
+            model,
+            cfg,
+            paths=val_paths,
+            num_steps=steps,
+            show_target=not cfg.dev_mode,
+        )
         print(f"Level {level} validate_price: {price:.4f}")
 
         if level == max_level:
             break
+
+    if score_at_end:
+        finest_steps = cfg.finest_grid_steps()
+        validate_price(
+            model,
+            cfg,
+            paths=val_paths,
+            num_steps=finest_steps,
+            show_target=not cfg.dev_mode,
+        )
 
     return model
 
@@ -123,13 +142,12 @@ def run_rl_loop(
 def main() -> None:
     parser = argparse.ArgumentParser(description="CARLOS Stage 2 RL loop")
     parser.add_argument("--loops", type=int, default=5, help="Max loops per grid level")
-    parser.add_argument("--dev", action="store_true", help="Use smaller path counts")
+    parser.add_argument("--dev", action="store_true", help="Smoke test (reduced paths)")
     parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
 
-    cfg = B1Config(dev_mode=args.dev)
-    model = run_rl_loop(cfg, seed=args.seed, max_loops_per_level=args.loops)
-    validate_price(model, cfg)
+    cfg = CarlosConfig(dev_mode=args.dev)
+    run_rl_loop(cfg, seed=args.seed, max_loops_per_level=args.loops)
 
 
 if __name__ == "__main__":

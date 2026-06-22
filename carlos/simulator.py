@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-from carlos.config import B1Config
+from carlos.config import CarlosConfig
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -24,7 +24,7 @@ def load_simulator_class():
     return GBMSimulator
 
 
-def make_simulator(cfg: B1Config, num_paths: int, seed: int, num_steps: int | None = None):
+def make_simulator(cfg: CarlosConfig, num_paths: int, seed: int, num_steps: int | None = None):
     GBMSimulator = load_simulator_class()
     steps = num_steps if num_steps is not None else cfg.num_steps
     dt = cfg.T / steps

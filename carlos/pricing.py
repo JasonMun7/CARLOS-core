@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from torch import Tensor
 
-from carlos.config import B1Config
+from carlos.config import CarlosConfig
 from carlos.model import ADNN
 from carlos.payoffs import basket_put
 from carlos.simulator import make_simulator
@@ -16,7 +16,7 @@ def compute_targets_fixed_k(
     model: ADNN,
     paths: np.ndarray,
     t_init: float,
-    cfg: B1Config,
+    cfg: CarlosConfig,
     device: torch.device,
 ) -> tuple[Tensor, Tensor]:
     """V1 fixed-k delay targets (Phase 3 stub; replaced by delayed_payoff in Phase 4)."""
@@ -82,46 +82,35 @@ def compute_targets_fixed_k(
 @torch.no_grad()
 def validate_price(
     model: ADNN,
-    cfg: B1Config | None = None,
-    seed: int = 123,
+    cfg: CarlosConfig | None = None,
+    *,
+    paths: np.ndarray | None = None,
     num_steps: int | None = None,
+    show_target: bool | None = None,
+    seed: int = 123,
 ) -> float:
     """Forward MC price from (t=0, X=X0) using Eq. 11 stopping rule."""
-    cfg = cfg or B1Config()
-    device = torch.device("cpu")
-    model = model.to(device)
-    model.eval()
+    cfg = cfg or CarlosConfig()
+    if show_target is None:
+        show_target = not cfg.dev_mode
 
     steps = num_steps if num_steps is not None else cfg.num_steps
-    sim = make_simulator(cfg, num_paths=cfg.val_paths, seed=seed, num_steps=steps)
-    sim.run()
-    paths = np.array(sim.paths(0))
-    dt = cfg.T / steps
 
-    total = 0.0
-    for p in range(cfg.val_paths):
-        t_stop = cfg.T
-        payoff = 0.0
-        for s in range(steps + 1):
-            t_s = s * dt
-            x_s = float(paths[p, s])
-            h_s = float(basket_put(torch.tensor([x_s]), cfg.strike, cfg.dim).item())
-            state = torch.tensor([[t_s, x_s]], dtype=torch.float32, device=device)
-            payoff_t = torch.tensor([h_s], dtype=torch.float32, device=device)
-            t_tensor = torch.tensor([t_s], dtype=torch.float32, device=device)
-            if model.stop(state, payoff_t, t_tensor, cfg.T).item() and h_s > 0:
-                t_stop = t_s
-                payoff = h_s
-                break
-        else:
-            x_T = float(paths[p, -1])
-            payoff = float(basket_put(torch.tensor([x_T]), cfg.strike, cfg.dim).item())
-            t_stop = cfg.T
+    if paths is not None:
+        price = forward_reward_on_paths(model, paths, cfg, steps)
+    else:
+        sim = make_simulator(cfg, num_paths=cfg.val_paths, seed=seed, num_steps=steps)
+        sim.run()
+        sim_paths = np.array(sim.paths(0))
+        price = forward_reward_on_paths(model, sim_paths, cfg, steps)
 
-        total += np.exp(-cfg.r * t_stop) * payoff
-
-    price = total / cfg.val_paths
-    print(f"validate_price: {price:.4f}  (Table 3 CARLOS target: {cfg.target_price})")
+    if show_target:
+        print(
+            f"validate_price: {price:.4f}  "
+            f"(Table 3 CARLOS target: {cfg.target_price})"
+        )
+    else:
+        print(f"validate_price: {price:.4f}")
     return price
 
 
@@ -129,7 +118,7 @@ def validate_price(
 def forward_rewards_per_path(
     model: ADNN,
     paths: np.ndarray,
-    cfg: B1Config,
+    cfg: CarlosConfig,
     num_steps: int | None = None,
 ) -> np.ndarray:
     """Per-path discounted payoffs using Eq. 11."""
@@ -166,7 +155,7 @@ def forward_rewards_per_path(
 def forward_reward_on_paths(
     model: ADNN,
     paths: np.ndarray,
-    cfg: B1Config,
+    cfg: CarlosConfig,
     num_steps: int | None = None,
 ) -> float:
     """Average discounted payoff on pre-simulated paths using Eq. 11."""

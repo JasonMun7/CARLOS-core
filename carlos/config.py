@@ -4,10 +4,18 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+B1_TOLERANCE = 0.05
+B1_TRAINING_SEED = 0
+
+
+def validation_bank_seed(training_seed: int) -> int:
+    """Deterministic validation path bank for a benchmark run."""
+    return training_seed + 1000
+
 
 @dataclass
-class B1Config:
-    """Table 2 B1 basket put + Table 6 CARLOS defaults."""
+class CarlosConfig:
+    """CARLOS contract + algorithm hyperparameters."""
 
     dim: int = 1
     x0: float = 36.0
@@ -22,7 +30,7 @@ class B1Config:
     # Stage 1 / solver grid: N=20 steps => dt^(tr,0) = T/20
     num_steps: int = 20
 
-    # Table 6 B1
+    # Table 6 defaults
     stage1_paths: int = 10_000
     stage1_epochs: int = 5
     rl_training_inputs: int = 10_000
@@ -53,11 +61,12 @@ class B1Config:
     def epochs(self, value: int) -> None:
         self.rl_epochs = value
 
-    # Validation
+    # Validation / benchmark
     val_paths: int = 10_000
     target_price: float = 4.592
+    target_tolerance: float = B1_TOLERANCE
 
-    # Dev mode: smaller paths for quick iteration
+    # Dev mode: smaller paths for smoke tests (not scored as B1)
     dev_mode: bool = False
 
     # Grid schedule
@@ -100,6 +109,9 @@ class B1Config:
             level += 1
         return level
 
+    def finest_grid_steps(self) -> int:
+        return self.grid_steps_for_level(self.max_grid_levels())
+
     def sampling_weights(self, level: int) -> dict[str, float]:
         """Eq. 25: reallocate exploration to exploitation as grid refines."""
         lam_exl = self.lambda_exl * ((1 - self.c_expl) ** level)
@@ -110,6 +122,18 @@ class B1Config:
             "minus": self.lambda_minus + extra / 2,
             "ter": self.lambda_ter,
         }
+
+    def benchmark_passes(self, price: float) -> bool:
+        return abs(price - self.target_price) <= self.target_tolerance
+
+
+def b1_benchmark() -> CarlosConfig:
+    """B1 benchmark preset: Table 2 contract + Table 6 hyperparameters."""
+    return CarlosConfig(dev_mode=False)
+
+
+# Backward compatibility alias
+B1Config = CarlosConfig
 
 
 @dataclass
