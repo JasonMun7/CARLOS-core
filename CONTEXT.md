@@ -35,3 +35,15 @@ The ADNN `R^Θ(t, x)` approximates this quantity. Stop when `R^Θ ≤ 0` and `h(
 ## GBM Path
 
 **GBM path** — asset trajectory under geometric Brownian motion (Eq. 15), independent Brownian motions per dimension under the risk-neutral measure.
+
+## LSMC
+
+**Longstaff-Schwartz Monte Carlo (LSMC)** — backward induction with regression to estimate continuation values at each exercise date (Sec. 2.1). Stage 1a produces per-step timing-value samples; Stage 1b stacks them to train the ADNN.
+
+## Anchor Sampling
+
+**Anchor sampling** (Algorithm 2) — mixture of exploratory (ITM path points), exploitative +/- (boundary crossings), and terminal inputs used to build each RL training batch (Eq. 20).
+
+## Traffic-Light Labels
+
+**Traffic-light labels** (Algorithm 3) — yellow/green/red path states governing exploratory delayed stopping: paths originating in the stopping region may wait before exercise to expand the learned continuation region.
