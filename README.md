@@ -23,12 +23,16 @@ python test_bridge.py
 
 ## Pipeline
 
+Run `python -m carlos` with no arguments for an interactive command guide.
+
 | Command | Description |
 |---------|-------------|
+| `PYTHONPATH=. python -m carlos` | Command guide (terminal UI) |
 | `PYTHONPATH=. python -m carlos benchmark b1` | **Official B1 benchmark** (pass/fail exit code) |
 | `PYTHONPATH=. python -m carlos train --dev --loops 3` | Smoke test — reduced paths, not scored |
-| `PYTHONPATH=. python -m carlos stage1` | Stage 1 LSMC → ADNN `R^[0]` (dev paths in module main) |
+| `PYTHONPATH=. python -m carlos stage1` | Stage 1 LSMC → ADNN `R^[0]` |
 | `PYTHONPATH=. python -m carlos agent` | V1 simplified smoke test |
+| `PYTHONPATH=. python -m carlos -q train --dev` | Plain output (no colors/progress) |
 
 Direct modules:
 

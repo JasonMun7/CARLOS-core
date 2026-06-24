@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import argparse
+import sys
 
 import numpy as np
 import torch
@@ -18,6 +18,7 @@ from carlos.pricing import forward_rewards_per_path, validate_price
 from carlos.sampling import sample_training_inputs
 from carlos.simulator import make_simulator
 from carlos.stage1 import run_stage1
+from carlos import ui
 
 
 def _train_batch(
@@ -68,12 +69,12 @@ def run_rl_loop(
     rl_state = RLState(lr=cfg.lr)
 
     max_level = cfg.max_grid_levels()
-    print(f"Grid levels: 0..{max_level}")
+    ui.grid_overview(max_level)
 
     for level in range(max_level + 1):
         steps = cfg.grid_steps_for_level(level)
         dt = cfg.dt_for_level(level)
-        print(f"\n=== Grid level {level}: dt={dt:.5f}, steps={steps} ===")
+        ui.grid_level_header(level, dt, steps)
 
         sim = make_simulator(cfg, num_paths=1, seed=seed, num_steps=steps)
         prev_rewards: np.ndarray | None = None
@@ -86,12 +87,16 @@ def run_rl_loop(
             )
 
             targets = np.zeros(m, dtype=np.float64)
-            for i in range(m):
-                t_i = float(batch.t_inits[i])
-                x_i = float(batch.x_inits[i])
-                sim.simulate_from(t_i, [x_i], 1, seed + rl_state.loop_count * 1000 + i)
-                path = np.array(sim.paths(0))[0]
-                targets[i] = compute_timing_target(model, path, t_i, cfg, level)
+            loop_label = rl_state.loop_count + 1
+            with ui.target_progress(m, f"Loop {loop_label} · delayed targets") as advance:
+                for i in range(m):
+                    t_i = float(batch.t_inits[i])
+                    x_i = float(batch.x_inits[i])
+                    sim.simulate_from(t_i, [x_i], 1, seed + rl_state.loop_count * 1000 + i)
+                    path = np.array(sim.paths(0))[0]
+                    targets[i] = compute_timing_target(model, path, t_i, cfg, level)
+                    if advance is not None:
+                        advance()
 
             loss = _train_batch(model, batch.states, targets, cfg, rl_state.lr)
             loops_at_level += 1
@@ -100,15 +105,12 @@ def run_rl_loop(
             path_slice = val_paths[:, : steps + 1]
             curr_rewards = forward_rewards_per_path(model, path_slice, cfg, steps)
             curr_val = float(np.mean(curr_rewards))
-            print(
-                f"loop {rl_state.loop_count}  loss={loss:.6f}  "
-                f"val_reward={curr_val:.4f}"
-            )
+            ui.loop_metrics(rl_state.loop_count, loss, curr_val)
 
             if prev_rewards is not None and should_advance_grid(
                 prev_rewards, curr_rewards, cfg.grid_transition_alpha
             ):
-                print("Grid saturation detected (Eq. 32)")
+                ui.grid_saturated()
                 break
 
             prev_rewards = curr_rewards
@@ -121,7 +123,7 @@ def run_rl_loop(
             num_steps=steps,
             show_target=not cfg.dev_mode,
         )
-        print(f"Level {level} validate_price: {price:.4f}")
+        ui.level_price(level, price)
 
         if level == max_level:
             break
@@ -140,14 +142,9 @@ def run_rl_loop(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="CARLOS Stage 2 RL loop")
-    parser.add_argument("--loops", type=int, default=5, help="Max loops per grid level")
-    parser.add_argument("--dev", action="store_true", help="Smoke test (reduced paths)")
-    parser.add_argument("--seed", type=int, default=0)
-    args = parser.parse_args()
+    from carlos.cli import dispatch
 
-    cfg = CarlosConfig(dev_mode=args.dev)
-    run_rl_loop(cfg, seed=args.seed, max_loops_per_level=args.loops)
+    raise SystemExit(dispatch(["train", *sys.argv[1:]]))
 
 
 if __name__ == "__main__":

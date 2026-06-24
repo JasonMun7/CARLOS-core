@@ -10,6 +10,7 @@ from carlos.config import CarlosConfig
 from carlos.model import ADNN
 from carlos.payoffs import basket_put
 from carlos.simulator import make_simulator
+from carlos import ui
 
 
 def compute_targets_fixed_k(
@@ -105,12 +106,9 @@ def validate_price(
         price = forward_reward_on_paths(model, sim_paths, cfg, steps)
 
     if show_target:
-        print(
-            f"validate_price: {price:.4f}  "
-            f"(Table 3 CARLOS target: {cfg.target_price})"
-        )
+        ui.validation_price(price, cfg.target_price)
     else:
-        print(f"validate_price: {price:.4f}")
+        ui.validation_price(price)
     return price
 
 

@@ -7,6 +7,7 @@ from carlos.grid import build_validation_paths
 from carlos.model import ADNN
 from carlos.pricing import validate_price
 from carlos.rl_loop import run_rl_loop
+from carlos import ui
 
 
 def score_b1(
@@ -26,10 +27,13 @@ def score_b1(
     )
     lo = cfg.target_price - cfg.target_tolerance
     hi = cfg.target_price + cfg.target_tolerance
-    status = "PASS" if cfg.benchmark_passes(price) else "FAIL"
-    print(
-        f"B1 benchmark: {status}  price={price:.4f}  "
-        f"acceptance=[{lo:.3f}, {hi:.3f}]  seed={training_seed}"
+    ui.benchmark_verdict(
+        passed=cfg.benchmark_passes(price),
+        price=price,
+        lo=lo,
+        hi=hi,
+        seed=training_seed,
+        elapsed=ui.elapsed_s(),
     )
     return price
 

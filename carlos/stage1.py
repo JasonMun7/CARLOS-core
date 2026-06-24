@@ -13,6 +13,7 @@ from carlos.lsmc import build_training_set, lsmc_price
 from carlos.model import ADNN
 from carlos.pricing import validate_price
 from carlos.simulator import make_simulator
+from carlos import ui
 
 
 def train_adnn_on_dataset(
@@ -44,7 +45,7 @@ def train_adnn_on_dataset(
             optimizer.step()
             total_loss += loss.item()
             n_batches += 1
-        print(f"stage1 epoch {epoch + 1}/{cfg.stage1_epochs}  loss={total_loss / n_batches:.6f}")
+        ui.stage1_epoch(epoch + 1, cfg.stage1_epochs, total_loss / n_batches)
 
     return net
 
@@ -56,10 +57,8 @@ def run_stage1(cfg: CarlosConfig | None = None, seed: int = 42) -> ADNN:
     paths = np.array(sim.paths(0))
 
     bermudan = lsmc_price(paths, cfg)
-    print(f"LSMC Bermudan price: {bermudan:.4f}")
-
     dataset = build_training_set(paths, cfg)
-    print(f"Stage 1 training samples: {len(dataset.targets)}")
+    ui.stage1_summary(bermudan, len(dataset.targets))
 
     model = train_adnn_on_dataset(cfg, dataset.states, dataset.targets)
     return model
