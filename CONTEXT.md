@@ -18,6 +18,26 @@ _Avoid_: Using `train --dev` or ad-hoc scripts as the official benchmark run.
 
 _Avoid_: Using `--dev` runs or coarse-grid prices as the B1 score.
 
+## B2
+
+**B2** — 2D arithmetic basket put (Table 2: X₀={40,40}, K=40, T=1, r=0.06). Table 3 CARLOS target **1.474** (±0.05). Table 6: M=20,000, 10 RL epochs.
+
+## M2 (Max Call)
+
+**M2.A / M2.B** — 2D max call benchmarks (T=3). Targets **14.171** and **15.711** respectively. M2.B uses asymmetric dividends {0.05, 0.15}.
+
+## M3
+
+**M3** — 3D max call (X₀={90,90,90}, K=100, T=3). Table 3 target **11.510**. ADNN hidden width 90; M=30,000.
+
+## M5 (Max Call)
+
+**M5.A / M5.B** — 5D max call benchmarks. Targets **26.55** and **12.009**. M5.B uses heterogeneous volatilities {0.08…0.4}. ADNN hidden width 150; M=50,000.
+
+## Paper benchmark suite
+
+**Paper benchmark suite** — all seven Table 2 contracts exposed via `python -m carlos benchmark list` and scored individually (`b1` … `m5b`). Protocol: [ADR 0002](docs/adr/0002-paper-benchmark-suite.md).
+
 ## Smoke Test
 
 **Smoke test** — a fast pipeline run with reduced path counts (`dev_mode`) to verify wiring and convergence behavior. Not scored against B1.
