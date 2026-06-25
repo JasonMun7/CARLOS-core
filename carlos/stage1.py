@@ -9,10 +9,12 @@ from torch.optim import Adam
 from torch.utils.data import DataLoader, TensorDataset
 
 from carlos.config import CarlosConfig
+from carlos.device import get_device
 from carlos.lsmc import build_training_set, lsmc_price
 from carlos.model import ADNN
 from carlos.pricing import validate_price
-from carlos.simulator import make_simulator
+from carlos.timing import section
+from carlos.simulator import make_simulator, paths_tensor
 from carlos import ui
 
 
@@ -22,8 +24,8 @@ def train_adnn_on_dataset(
     targets: np.ndarray,
     model: ADNN | None = None,
 ) -> ADNN:
-    device = torch.device("cpu")
-    net = model or ADNN(cfg.dim)
+    device = get_device()
+    net = model or ADNN(cfg.dim, hidden=cfg.adnn_width())
     net = net.to(device)
     optimizer = Adam(net.parameters(), lr=cfg.lr)
     criterion = nn.MSELoss()
@@ -32,32 +34,35 @@ def train_adnn_on_dataset(
     y = torch.tensor(targets, dtype=torch.float32).unsqueeze(-1)
     loader = DataLoader(TensorDataset(x, y), batch_size=cfg.batch_size, shuffle=True)
 
-    for epoch in range(cfg.stage1_epochs):
-        net.train()
-        total_loss = 0.0
-        n_batches = 0
-        for xb, yb in loader:
-            xb, yb = xb.to(device), yb.to(device)
-            pred = net(xb)
-            loss = criterion(pred, yb)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-            n_batches += 1
-        ui.stage1_epoch(epoch + 1, cfg.stage1_epochs, total_loss / n_batches)
+    with section("stage1.adnn_train"):
+        for epoch in range(cfg.stage1_epochs):
+            net.train()
+            total_loss = 0.0
+            n_batches = 0
+            for xb, yb in loader:
+                xb, yb = xb.to(device), yb.to(device)
+                pred = net(xb)
+                loss = criterion(pred, yb)
+                optimizer.zero_grad()
+                loss.backward()
+                optimizer.step()
+                total_loss += loss.item()
+                n_batches += 1
+            ui.stage1_epoch(epoch + 1, cfg.stage1_epochs, total_loss / n_batches)
 
     return net
 
 
 def run_stage1(cfg: CarlosConfig | None = None, seed: int = 42) -> ADNN:
     cfg = cfg or CarlosConfig()
-    sim = make_simulator(cfg, num_paths=cfg.stage1_paths, seed=seed)
-    sim.run()
-    paths = np.array(sim.paths(0))
+    with section("stage1.simulate"):
+        sim = make_simulator(cfg, num_paths=cfg.stage1_paths, seed=seed)
+        sim.run()
+        paths = paths_tensor(sim)
 
-    bermudan = lsmc_price(paths, cfg)
-    dataset = build_training_set(paths, cfg)
+    with section("stage1.lsmc"):
+        bermudan = lsmc_price(paths, cfg)
+        dataset = build_training_set(paths, cfg)
     ui.stage1_summary(bermudan, len(dataset.targets))
 
     model = train_adnn_on_dataset(cfg, dataset.states, dataset.targets)
