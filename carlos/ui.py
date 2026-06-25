@@ -54,6 +54,7 @@ def welcome() -> None:
     table = Table(box=box.SIMPLE, show_header=True, header_style="bold")
     table.add_column("Command", style="cyan")
     table.add_column("What it does")
+    table.add_row("benchmark list", "All seven paper contracts + Table 3 targets")
     table.add_row("benchmark b1", "Official scored B1 run (pass/fail exit code)")
     table.add_row("train [--dev]", "Full pipeline — use [dim]--dev[/dim] for smoke tests")
     table.add_row("stage1", "LSMC initialization only → R^[0]")
@@ -174,11 +175,14 @@ def benchmark_verdict(
     hi: float,
     seed: int,
     elapsed: float,
+    preset_id: str = "b1",
+    label: str | None = None,
 ) -> None:
+    title = label or preset_id.upper()
     status = "PASS" if passed else "FAIL"
     if _quiet:
         console.print(
-            f"B1 benchmark: {status}  price={price:.4f}  "
+            f"{title} benchmark: {status}  price={price:.4f}  "
             f"acceptance=[{lo:.3f}, {hi:.3f}]  seed={seed}"
         )
         return
@@ -186,12 +190,30 @@ def benchmark_verdict(
     table = Table(box=box.DOUBLE_EDGE, show_header=False, padding=(0, 1))
     table.add_column("", style="dim", width=14)
     table.add_column("")
+    table.add_row("Contract", f"[bold]{title}[/bold]")
     table.add_row("Result", f"[bold {color}]{status}[/bold {color}]")
     table.add_row("Price", f"[bold]{price:.4f}[/bold]")
     table.add_row("Acceptance", f"{lo:.3f} – {hi:.3f}")
     table.add_row("Seed", str(seed))
     table.add_row("Elapsed", f"{elapsed:.1f}s")
-    console.print(Panel(table, title="[bold]B1 Benchmark[/bold]", border_style=color))
+    console.print(Panel(table, title=f"[bold]{title} Benchmark[/bold]", border_style=color))
+
+
+def benchmark_list(benchmarks: dict, labels: dict) -> None:
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("Preset", style="cyan")
+    table.add_column("Contract")
+    table.add_column("Target")
+    table.add_column("Tolerance")
+    for key, factory in benchmarks.items():
+        cfg = factory()
+        table.add_row(
+            key,
+            labels.get(key, key),
+            f"{cfg.target_price:.4f}",
+            f"±{cfg.target_tolerance:.4f}",
+        )
+    console.print(Panel(table, title="[bold]Paper benchmark suite[/bold]", border_style="blue"))
 
 
 @contextmanager
