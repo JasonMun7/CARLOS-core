@@ -5,34 +5,19 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
-import torch
 
 from carlos.config import CarlosConfig
+from carlos.contracts import payoff_np, sample_uniform_state, state_from_tx
+from carlos.inference import stop_batch
 from carlos.model import ADNN
-from carlos.payoffs import basket_put_np
-from carlos.simulator import make_simulator
+from carlos.simulator import make_simulator, paths_tensor
 
 
 @dataclass
 class SampleBatch:
     states: np.ndarray  # (M, d+1)
     t_inits: np.ndarray
-    x_inits: np.ndarray
-
-
-def _state_from_tx(t: float, x: float, dim: int) -> np.ndarray:
-    row = [t] + [x] * dim
-    return np.asarray(row, dtype=np.float64)
-
-
-def _phi(model: ADNN, t: float, x: float, cfg: CarlosConfig) -> bool:
-    device = torch.device("cpu")
-    h = float(basket_put_np(np.array([x]), cfg.strike, cfg.dim)[0])
-    state = torch.tensor([[[t, x]]], dtype=torch.float32, device=device)
-    payoff = torch.tensor([h], dtype=torch.float32, device=device)
-    t_tensor = torch.tensor([t], dtype=torch.float32, device=device)
-    with torch.no_grad():
-        return bool(model.stop(state, payoff, t_tensor, cfg.T).item())
+    x_inits: np.ndarray  # (M,) for d=1 or (M, d)
 
 
 def sample_training_inputs(
@@ -56,35 +41,43 @@ def sample_training_inputs(
 
     sim = make_simulator(cfg, num_paths=num_pilot_paths, seed=seed, num_steps=steps)
     sim.run()
-    paths = np.array(sim.paths(0))
+    paths = paths_tensor(sim)
 
-    exl_pts: list[tuple[float, float]] = []
-    plus_pts: list[tuple[float, float]] = []
-    minus_pts: list[tuple[float, float]] = []
-    ter_pts: list[tuple[float, float]] = [(cfg.T, float(paths[p, -1])) for p in range(num_pilot_paths)]
+    exl_pts: list[tuple[float, np.ndarray]] = []
+    plus_pts: list[tuple[float, np.ndarray]] = []
+    minus_pts: list[tuple[float, np.ndarray]] = []
+    ter_pts: list[tuple[float, np.ndarray]] = [
+        (cfg.T, paths[p, -1].copy()) for p in range(num_pilot_paths)
+    ]
 
     for p in range(num_pilot_paths):
+        t_all: list[float] = []
+        x_all: list[np.ndarray] = []
         for s in range(steps + 1):
             t_s = s * dt
-            x_s = float(paths[p, s])
-            h_s = float(basket_put_np(np.array([x_s]), cfg.strike, cfg.dim)[0])
-            if h_s > 0:
-                exl_pts.append((t_s, x_s))
+            x_s = paths[p, s] if paths.ndim == 2 else paths[p, s, :]
+            t_all.append(t_s)
+            x_all.append(np.asarray(x_s, dtype=np.float64))
 
-            if s >= 1:
-                t_prev = (s - 1) * dt
-                x_prev = float(paths[p, s - 1])
-                phi_prev = _phi(model, t_prev, x_prev, cfg)
-                phi_curr = _phi(model, t_s, x_s, cfg)
-                if phi_prev != phi_curr:
-                    if phi_curr:
-                        minus_pts.append((t_s, x_s))
+        h_all = payoff_np(np.stack(x_all), cfg)
+        for s in range(steps + 1):
+            if h_all[s] > 0:
+                exl_pts.append((t_all[s], x_all[s]))
+
+        if steps >= 1:
+            t_arr = np.array(t_all)
+            x_arr = np.stack(x_all)
+            stops = stop_batch(model, t_arr, x_arr, cfg)
+            for s in range(1, steps + 1):
+                if stops[s - 1] != stops[s]:
+                    if stops[s]:
+                        minus_pts.append((t_all[s], x_all[s]))
                     else:
-                        plus_pts.append((t_prev, x_prev))
+                        plus_pts.append((t_all[s - 1], x_all[s - 1]))
 
     rng = np.random.default_rng(seed)
 
-    def pick(pool: list[tuple[float, float]], n: int) -> list[tuple[float, float]]:
+    def pick(pool: list[tuple[float, np.ndarray]], n: int) -> list[tuple[float, np.ndarray]]:
         if not pool or n <= 0:
             return []
         idx = rng.integers(0, len(pool), size=n)
@@ -98,10 +91,13 @@ def sample_training_inputs(
     )
 
     while len(selected) < m:
-        selected.append((float(rng.uniform(0, cfg.T)), float(rng.uniform(cfg.x_min, cfg.x_max))))
+        selected.append(sample_uniform_state(rng, cfg))
 
     selected = selected[:m]
-    states = np.stack([_state_from_tx(t, x, cfg.dim) for t, x in selected])
-    t_inits = np.array([t for t, _ in selected])
-    x_inits = np.array([x for _, x in selected])
+    states = np.stack([state_from_tx(t, x, cfg.dim) for t, x in selected])
+    t_inits = np.array([t for t, _ in selected], dtype=np.float64)
+    if cfg.dim == 1:
+        x_inits = np.array([float(np.asarray(x).reshape(-1)[0]) for _, x in selected])
+    else:
+        x_inits = np.stack([np.asarray(x, dtype=np.float64).reshape(cfg.dim) for _, x in selected])
     return SampleBatch(states=states, t_inits=t_inits, x_inits=x_inits)

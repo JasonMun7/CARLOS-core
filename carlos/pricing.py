@@ -7,9 +7,11 @@ import torch
 from torch import Tensor
 
 from carlos.config import CarlosConfig
+from carlos.contracts import payoff_np, payoff_torch
+from carlos.device import get_device
+from carlos.inference import stop_batch
 from carlos.model import ADNN
-from carlos.payoffs import basket_put
-from carlos.simulator import make_simulator
+from carlos.simulator import make_simulator, paths_tensor
 from carlos import ui
 
 
@@ -20,8 +22,9 @@ def compute_targets_fixed_k(
     cfg: CarlosConfig,
     device: torch.device,
 ) -> tuple[Tensor, Tensor]:
-    """V1 fixed-k delay targets (Phase 3 stub; replaced by delayed_payoff in Phase 4)."""
-    num_paths, n_cols = paths.shape
+    """V1 fixed-k delay targets (legacy agent stub)."""
+    num_paths = paths.shape[0]
+    n_cols = paths.shape[1]
     dt = cfg.T / cfg.num_steps
     times = t_init + np.arange(n_cols) * dt
 
@@ -32,10 +35,13 @@ def compute_targets_fixed_k(
     with torch.no_grad():
         for p in range(num_paths):
             path = paths[p]
-            x_t = float(path[0])
-            h_t = float(basket_put(torch.tensor([x_t]), cfg.strike, cfg.dim).item())
+            x_t = path[0] if path.ndim == 1 else path[0]
+            h_t = float(payoff_np(x_t, cfg))
 
-            state0 = torch.tensor([[t_init, x_t]], dtype=torch.float32, device=device)
+            state0 = torch.tensor([[t_init, float(x_t[0]) if np.ndim(x_t) else float(x_t)]], dtype=torch.float32, device=device)
+            if cfg.dim > 1:
+                row = [t_init] + list(np.asarray(x_t, dtype=np.float64).reshape(-1))
+                state0 = torch.tensor([row], dtype=torch.float32, device=device)
             payoff0 = torch.tensor([h_t], dtype=torch.float32, device=device)
             t0 = torch.tensor([t_init], dtype=torch.float32, device=device)
             would_stop = model.stop(state0, payoff0, t0, cfg.T).item()
@@ -43,20 +49,19 @@ def compute_targets_fixed_k(
             if would_stop and h_t > 0:
                 stop_idx = min(cfg.delay_k, n_cols - 1)
                 t_stop = times[stop_idx]
-                x_stop = float(path[stop_idx])
-                h_stop = float(
-                    basket_put(torch.tensor([x_stop]), cfg.strike, cfg.dim).item()
-                )
+                x_stop = path[stop_idx]
+                h_stop = float(payoff_np(x_stop, cfg))
                 y_dpf = np.exp(-cfg.r * (t_stop - t_init)) * h_stop
                 y = y_dpf - h_t
             else:
                 for s in range(1, n_cols):
                     t_s = times[s]
-                    x_s = float(path[s])
-                    h_s = float(
-                        basket_put(torch.tensor([x_s]), cfg.strike, cfg.dim).item()
-                    )
-                    state_s = torch.tensor([[t_s, x_s]], dtype=torch.float32, device=device)
+                    x_s = path[s]
+                    h_s = float(payoff_np(x_s, cfg))
+                    if cfg.dim > 1:
+                        state_s = torch.tensor([[t_s, *list(np.asarray(x_s))]], dtype=torch.float32, device=device)
+                    else:
+                        state_s = torch.tensor([[t_s, float(x_s)]], dtype=torch.float32, device=device)
                     payoff_s = torch.tensor([h_s], dtype=torch.float32, device=device)
                     t_tensor = torch.tensor([t_s], dtype=torch.float32, device=device)
                     if model.stop(state_s, payoff_s, t_tensor, cfg.T).item():
@@ -65,14 +70,15 @@ def compute_targets_fixed_k(
                         break
                 else:
                     t_stop = times[-1]
-                    h_stop = float(
-                        basket_put(torch.tensor([path[-1]]), cfg.strike, cfg.dim).item()
-                    )
+                    h_stop = float(payoff_np(path[-1], cfg))
 
                 y_dpf = np.exp(-cfg.r * (t_stop - t_init)) * h_stop
                 y = y_dpf - h_t
 
-            states.append(torch.tensor([t_init, x_t], dtype=torch.float32))
+            if cfg.dim > 1:
+                states.append(torch.tensor([t_init, *list(np.asarray(x_t).reshape(-1))], dtype=torch.float32))
+            else:
+                states.append(torch.tensor([t_init, float(x_t)], dtype=torch.float32))
             targets.append(y)
 
     state_batch = torch.stack(states).to(device)
@@ -90,7 +96,6 @@ def validate_price(
     show_target: bool | None = None,
     seed: int = 123,
 ) -> float:
-    """Forward MC price from (t=0, X=X0) using Eq. 11 stopping rule."""
     cfg = cfg or CarlosConfig()
     if show_target is None:
         show_target = not cfg.dev_mode
@@ -102,7 +107,7 @@ def validate_price(
     else:
         sim = make_simulator(cfg, num_paths=cfg.val_paths, seed=seed, num_steps=steps)
         sim.run()
-        sim_paths = np.array(sim.paths(0))
+        sim_paths = paths_tensor(sim)
         price = forward_reward_on_paths(model, sim_paths, cfg, steps)
 
     if show_target:
@@ -119,34 +124,45 @@ def forward_rewards_per_path(
     cfg: CarlosConfig,
     num_steps: int | None = None,
 ) -> np.ndarray:
-    """Per-path discounted payoffs using Eq. 11."""
-    device = torch.device("cpu")
+    """Per-path discounted payoffs using Eq. 11 (batched by timestep)."""
     model.eval()
     steps = num_steps if num_steps is not None else cfg.num_steps
     dt = cfg.T / steps
     k_paths = paths.shape[0]
-    rewards = np.zeros(k_paths, dtype=np.float64)
 
-    for p in range(k_paths):
-        t_stop = cfg.T
-        payoff = 0.0
-        for s in range(steps + 1):
-            t_s = s * dt
-            x_s = float(paths[p, s])
-            h_s = float(basket_put(torch.tensor([x_s]), cfg.strike, cfg.dim).item())
-            state = torch.tensor([[t_s, x_s]], dtype=torch.float32, device=device)
-            payoff_t = torch.tensor([h_s], dtype=torch.float32, device=device)
-            t_tensor = torch.tensor([t_s], dtype=torch.float32, device=device)
-            if model.stop(state, payoff_t, t_tensor, cfg.T).item() and h_s > 0:
-                t_stop = t_s
-                payoff = h_s
-                break
-        else:
-            payoff = float(basket_put(torch.tensor([paths[p, -1]]), cfg.strike, cfg.dim).item())
-            t_stop = cfg.T
-        rewards[p] = np.exp(-cfg.r * t_stop) * payoff
+    if paths.ndim == 2 and paths.shape[1] == steps + 1:
+        path_steps = steps
+    elif paths.ndim == 3 and paths.shape[1] == steps + 1:
+        path_steps = steps
+    else:
+        path_steps = paths.shape[1] - 1
 
-    return rewards
+    alive = np.ones(k_paths, dtype=bool)
+    t_stop = np.full(k_paths, cfg.T, dtype=np.float64)
+    payoff = np.zeros(k_paths, dtype=np.float64)
+
+    for s in range(path_steps + 1):
+        if not np.any(alive):
+            break
+        idx = np.where(alive)[0]
+        t_s = s * dt
+        x_s = paths[idx, s] if paths.ndim == 2 else paths[idx, s, :]
+        stops = stop_batch(model, np.full(len(idx), t_s), x_s, cfg)
+        h_s = payoff_np(x_s, cfg)
+        exercise = stops & (h_s > 0)
+        if np.any(exercise):
+            ex_idx = idx[exercise]
+            alive[ex_idx] = False
+            t_stop[ex_idx] = t_s
+            payoff[ex_idx] = h_s[exercise]
+
+    tail = alive
+    if np.any(tail):
+        x_T = paths[tail, -1] if paths.ndim == 2 else paths[tail, -1, :]
+        payoff[tail] = payoff_np(x_T, cfg)
+        t_stop[tail] = cfg.T
+
+    return np.exp(-cfg.r * t_stop) * payoff
 
 
 @torch.no_grad()
@@ -156,6 +172,5 @@ def forward_reward_on_paths(
     cfg: CarlosConfig,
     num_steps: int | None = None,
 ) -> float:
-    """Average discounted payoff on pre-simulated paths using Eq. 11."""
     rewards = forward_rewards_per_path(model, paths, cfg, num_steps)
     return float(np.mean(rewards))
