@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from enum import Enum
+
 import numpy as np
 import torch
 from torch import Tensor
+
+
+class PayoffKind(str, Enum):
+    BASKET_PUT = "basket_put"
+    MAX_CALL = "max_call"
 
 
 def basket_put(x: Tensor, strike: float, dim: int) -> Tensor:

@@ -7,52 +7,72 @@ from dataclasses import dataclass
 import numpy as np
 
 from carlos.config import CarlosConfig
-from carlos.payoffs import basket_put_np
+from carlos.contracts import payoff_np
 
 
-def polynomial_basis(x: np.ndarray) -> np.ndarray:
-    """Basis (1, x, x^2) for d=1."""
+def polynomial_basis(x: np.ndarray, dim: int) -> np.ndarray:
+    """Regression basis: (1, x_1..x_d, x_1^2..x_d^2) for multi-dim LSMC."""
     x = np.asarray(x, dtype=np.float64)
-    return np.column_stack([np.ones_like(x), x, x**2])
+    if x.ndim == 1:
+        if x.shape[0] == dim:
+            x = x.reshape(1, dim)
+        else:
+            x = x.reshape(-1, 1)
+    if dim == 1:
+        col = x[:, 0]
+        return np.column_stack([np.ones_like(col), col, col**2])
+    cols = [np.ones(x.shape[0])]
+    for i in range(dim):
+        cols.append(x[:, i])
+    for i in range(dim):
+        cols.append(x[:, i] ** 2)
+    return np.column_stack(cols)
+
+
+def path_assets(paths: np.ndarray, step: int) -> np.ndarray:
+    if paths.ndim == 2:
+        return paths[:, step]
+    return paths[:, step, :]
 
 
 def payoff_paths(paths: np.ndarray, cfg: CarlosConfig) -> np.ndarray:
-    return basket_put_np(paths, cfg.strike, cfg.dim)
+    if paths.ndim == 1:
+        return payoff_np(paths, cfg)
+    if paths.ndim == 2 and paths.shape[1] == cfg.dim:
+        return payoff_np(paths, cfg)
+    return payoff_np(path_assets(paths, -1 if paths.ndim == 2 else 0), cfg)
 
 
 @dataclass
 class LSMCResult:
-    states: np.ndarray  # (M, d+1) columns [t, x...]
-    targets: np.ndarray  # (M,) timing values y = w - h(x)
+    states: np.ndarray
+    targets: np.ndarray
 
 
 def build_training_set(paths: np.ndarray, cfg: CarlosConfig) -> LSMCResult:
-    """
-    Backward LSMC; stack (t, x) -> timing value for Stage 1b ADNN init.
-
-    paths: (K, N+1) asset values at each grid point.
-    """
-    k_paths, n_plus = paths.shape
+    k_paths = paths.shape[0]
+    n_plus = paths.shape[1]
     n_steps = n_plus - 1
     dt = cfg.T / n_steps
 
-    cashflow = payoff_paths(paths[:, n_steps], cfg)
+    cashflow = payoff_np(path_assets(paths, n_steps), cfg)
     exercise_step = np.full(k_paths, n_steps, dtype=np.int32)
 
     state_rows: list[list[float]] = []
     target_rows: list[float] = []
 
     for n in range(n_steps - 1, -1, -1):
-        x_n = paths[:, n]
-        h_n = payoff_paths(x_n, cfg)
+        x_n = path_assets(paths, n)
+        h_n = payoff_np(x_n, cfg)
         hold_steps = exercise_step - n
         discounted = cashflow * np.exp(-cfg.r * dt * hold_steps)
 
         itm = h_n > 1e-12
-        if np.count_nonzero(itm) >= cfg.dim + 2:
+        min_samples = max(cfg.dim + 2, 4)
+        if np.count_nonzero(itm) >= min_samples:
             x_itm = x_n[itm]
             y_itm = discounted[itm]
-            X = polynomial_basis(x_itm)
+            X = polynomial_basis(x_itm, cfg.dim)
             coeffs, _, _, _ = np.linalg.lstsq(X, y_itm, rcond=None)
             continuation = X @ coeffs
 
@@ -65,36 +85,38 @@ def build_training_set(paths: np.ndarray, cfg: CarlosConfig) -> LSMCResult:
             t_n = n * dt
             timing = continuation - h_n[itm]
             for xi, yi in zip(x_itm, timing):
-                state_rows.append([t_n, float(xi)])
+                if cfg.dim == 1:
+                    state_rows.append([t_n, float(np.asarray(xi).reshape(-1)[0])])
+                else:
+                    state_rows.append([t_n, *list(np.asarray(xi, dtype=np.float64).reshape(-1))])
                 target_rows.append(float(yi))
         else:
             exercise = itm & (h_n >= discounted)
             cashflow[exercise] = h_n[exercise]
             exercise_step[exercise] = n
 
-    states = np.asarray(state_rows, dtype=np.float64)
-    targets = np.asarray(target_rows, dtype=np.float64)
-    return LSMCResult(states=states, targets=targets)
+    return LSMCResult(states=np.asarray(state_rows, dtype=np.float64), targets=np.asarray(target_rows, dtype=np.float64))
 
 
 def lsmc_price(paths: np.ndarray, cfg: CarlosConfig) -> float:
-    """Bermudan LSMC price from path matrix."""
-    k_paths, n_plus = paths.shape
+    k_paths = paths.shape[0]
+    n_plus = paths.shape[1]
     n_steps = n_plus - 1
     dt = cfg.T / n_steps
 
-    cashflow = payoff_paths(paths[:, n_steps], cfg)
+    cashflow = payoff_np(path_assets(paths, n_steps), cfg)
     exercise_step = np.full(k_paths, n_steps, dtype=np.int32)
 
     for n in range(n_steps - 1, -1, -1):
-        x_n = paths[:, n]
-        h_n = payoff_paths(x_n, cfg)
+        x_n = path_assets(paths, n)
+        h_n = payoff_np(x_n, cfg)
         hold_steps = exercise_step - n
         discounted = cashflow * np.exp(-cfg.r * dt * hold_steps)
 
         itm = h_n > 1e-12
-        if np.count_nonzero(itm) >= cfg.dim + 2:
-            X = polynomial_basis(x_n[itm])
+        min_samples = max(cfg.dim + 2, 4)
+        if np.count_nonzero(itm) >= min_samples:
+            X = polynomial_basis(x_n[itm], cfg.dim)
             coeffs, _, _, _ = np.linalg.lstsq(X, discounted[itm], rcond=None)
             continuation = X @ coeffs
             exercise = np.zeros(k_paths, dtype=bool)

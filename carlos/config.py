@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+from carlos.payoffs import PayoffKind
 
 B1_TOLERANCE = 0.05
 B1_TRAINING_SEED = 0
@@ -11,6 +13,12 @@ B1_TRAINING_SEED = 0
 def validation_bank_seed(training_seed: int) -> int:
     """Deterministic validation path bank for a benchmark run."""
     return training_seed + 1000
+
+
+def benchmark_tolerance(target_std: float | None, floor: float = B1_TOLERANCE) -> float:
+    if target_std is None:
+        return floor
+    return max(floor, 3.0 * target_std)
 
 
 @dataclass
@@ -26,6 +34,17 @@ class CarlosConfig:
     delta: float = 0.0
     x_min: float = 30.0
     x_max: float = 40.0
+
+    # Optional per-asset vectors (Table 2 multi-dim contracts)
+    x0_vec: list[float] | None = None
+    sigma_vec: list[float] | None = None
+    delta_vec: list[float] | None = None
+    x_mins: list[float] | None = None
+    x_maxs: list[float] | None = None
+
+    payoff: PayoffKind = PayoffKind.BASKET_PUT
+    benchmark_id: str = "b1"
+    adnn_hidden: int | None = None
 
     # Stage 1 / solver grid: N=20 steps => dt^(tr,0) = T/20
     num_steps: int = 20
@@ -50,34 +69,38 @@ class CarlosConfig:
     batch_size: int = 64
     lr: float = 1e-4
     lr_decay: float = 0.7
-    rl_epochs: int = 5
+    rl_epochs: int = 1
+    target_workers: int = 0  # 0 = auto from cpu count
+
+    # Validation / benchmark
+    val_paths: int = 10_000
+    target_price: float = 4.592
+    target_std: float | None = 0.005
+    target_tolerance: float = B1_TOLERANCE
+
+    dev_mode: bool = False
+    profile: bool = False
+
+    # Grid schedule
+    min_dt: float = 1.0 / 150.0
+    grid_transition_alpha: float = 0.05
+    min_loops_before_saturation: int = 3
+
+    def __post_init__(self) -> None:
+        if self.target_std is not None and self.benchmark_id != "custom":
+            self.target_tolerance = benchmark_tolerance(self.target_std)
+        if self.dev_mode:
+            self.stage1_paths = min(self.stage1_paths, 1_000)
+            self.rl_training_inputs = min(self.rl_training_inputs, 512)
+            self.val_paths = min(self.val_paths, 1_000)
 
     @property
     def epochs(self) -> int:
-        """Alias used by v1 agent wrapper."""
         return self.rl_epochs
 
     @epochs.setter
     def epochs(self, value: int) -> None:
         self.rl_epochs = value
-
-    # Validation / benchmark
-    val_paths: int = 10_000
-    target_price: float = 4.592
-    target_tolerance: float = B1_TOLERANCE
-
-    # Dev mode: smaller paths for smoke tests (not scored as B1)
-    dev_mode: bool = False
-
-    # Grid schedule
-    min_dt: float = 1.0 / 150.0
-    grid_transition_alpha: float = 0.05
-
-    def __post_init__(self) -> None:
-        if self.dev_mode:
-            self.stage1_paths = min(self.stage1_paths, 1_000)
-            self.rl_training_inputs = min(self.rl_training_inputs, 512)
-            self.val_paths = min(self.val_paths, 1_000)
 
     @property
     def dt(self) -> float:
@@ -85,18 +108,23 @@ class CarlosConfig:
 
     @property
     def deltas(self) -> list[float]:
+        if self.delta_vec is not None:
+            return list(self.delta_vec)
         return [self.delta] * self.dim
 
     @property
     def sigmas(self) -> list[float]:
+        if self.sigma_vec is not None:
+            return list(self.sigma_vec)
         return [self.sigma] * self.dim
 
     @property
     def x0s(self) -> list[float]:
+        if self.x0_vec is not None:
+            return list(self.x0_vec)
         return [self.x0] * self.dim
 
     def grid_steps_for_level(self, level: int) -> int:
-        """Number of steps at grid level b (halving dt each level)."""
         dt_b = self.dt / (2**level)
         return max(1, int(round(self.T / dt_b)))
 
@@ -113,7 +141,6 @@ class CarlosConfig:
         return self.grid_steps_for_level(self.max_grid_levels())
 
     def sampling_weights(self, level: int) -> dict[str, float]:
-        """Eq. 25: reallocate exploration to exploitation as grid refines."""
         lam_exl = self.lambda_exl * ((1 - self.c_expl) ** level)
         extra = self.lambda_exl - lam_exl
         return {
@@ -126,13 +153,18 @@ class CarlosConfig:
     def benchmark_passes(self, price: float) -> bool:
         return abs(price - self.target_price) <= self.target_tolerance
 
+    def adnn_width(self) -> int:
+        if self.adnn_hidden is not None:
+            return self.adnn_hidden
+        return max(30 * self.dim, 60)
+
 
 def b1_benchmark() -> CarlosConfig:
-    """B1 benchmark preset: Table 2 contract + Table 6 hyperparameters."""
-    return CarlosConfig(dev_mode=False)
+    from carlos.benchmarks import b1_benchmark as _factory
+
+    return _factory()
 
 
-# Backward compatibility alias
 B1Config = CarlosConfig
 
 
@@ -144,3 +176,5 @@ class RLState:
     loop_count: int = 0
     lr: float = 1e-4
     prev_val_reward: float | None = None
+    best_finest_price: float = -1.0
+    best_state_dict: dict | None = field(default=None, repr=False)
